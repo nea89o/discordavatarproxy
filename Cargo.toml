@@ -1,0 +1,25 @@
+[package]
+name = "pfp"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[dependencies.hyper-tls]
+version = "*"
+
+[dependencies.hyper]
+version = "*"
+features = ["full"]
+
+[dependencies.tokio]
+version = "*"
+features = ["full"]
+
+[dependencies.anyhow]
+version = "*"
+
+[dependencies.serde_json]
+version = "*"
