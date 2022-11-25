@@ -32,8 +32,13 @@ async fn resp(arc: Arc<Ctx>, req: Request<Body>) -> anyhow::Result<Response<Body
             .status(err)
             .body(format!("{} {}", err, text).into())?);
     }
-
     let x = req.uri().path();
+    if x == "/" {
+        return Ok(Response::builder()
+            .status(302)
+            .header("Location", "https://git.nea.moe/nea/discordavatarproxy")
+            .body(Body::empty())?);
+    }
     let request = match x.strip_prefix("/avatar/") {
         None => return make_err(404, "Not found"),
         Some(request) => request,
