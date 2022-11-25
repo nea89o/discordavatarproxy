@@ -76,12 +76,14 @@ async fn wrap_error(arc: Arc<Ctx>, req: Request<Body>) -> anyhow::Result<Respons
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let token = env::var("TOKEN")?;
+    let portstr = env::var("PORT")?;
+    let port = portstr.parse::<u16>()?;
     println!("Running with token: {}", token);
     let https = HttpsConnector::new();
     let client = Client::builder()
         .build::<_, Body>(https);
     let arc = Arc::new(Ctx { client, token });
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let service = make_service_fn(|_conn| {
         let carc = Arc::clone(&arc);
         async move {
