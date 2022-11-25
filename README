@@ -1,0 +1,15 @@
+Proxy for discord avatars.
+
+This program allows you to proxy discord avatars so that they are always up to date.
+
+Run: 
+
+    TOKEN=<discordtoken> PORT=3000 cargo run 
+
+Listens to localhost:<port>
+
+Requests to localhost:<port>/avatar/<userid> instead reply with a png of the users avatar.
+
+A publicly hosted version is available at https://dp.nea.moe/avatar/310702108997320705
+
+
