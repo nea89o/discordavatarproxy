@@ -8,7 +8,8 @@ Run:
 
 Listens to localhost:<port>
 
-Requests to localhost:<port>/avatar/<userid> instead reply with a png of the users avatar.
+Requests to localhost:<port>/avatar/<userid>.png reply with a png of the users avatar.
+Requests to localhost:<port>/avatar/<userid>.json reply with a json of the users data.
 
 A publicly hosted version is available at https://dp.nea.moe/avatar/310702108997320705
 
