@@ -23,3 +23,8 @@ version = "*"
 
 [dependencies.serde_json]
 version = "*"
+
+[dependencies.serde]
+version = "*"
+features = ["derive"]
+

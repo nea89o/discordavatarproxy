@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt::format;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -6,8 +7,31 @@ use hyper::{Body, Method, Request, Response, Server};
 use hyper::client::{Client, HttpConnector};
 use hyper::service::{make_service_fn, service_fn};
 use hyper_tls::HttpsConnector;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-async fn get_user_data(client: &Client<HttpsConnector<HttpConnector>>, token: &str, user_id: u64) -> anyhow::Result<serde_json::Value> {
+macro_rules! unwrap_resp {
+    ($x:expr) => {
+        match $x {
+            Ok(x) => x,
+            Err(x) => return Ok(x)
+        }
+    };
+}
+
+#[derive(Deserialize, Debug)]
+struct DiscordUserFormat {
+    accent_color: Option<i64>,
+    username: String,
+    discriminator: String,
+    id: String,
+    public_flags: i64,
+    #[serde(default)] bot: bool,
+    banner: Option<String>,
+    avatar: Option<String>,
+}
+
+async fn get_user_data(client: &Client<HttpsConnector<HttpConnector>>, token: &str, user_id: u64) -> anyhow::Result<DiscordUserFormat> {
     let request = Request::builder()
         .method(Method::GET)
         .uri(format!("https://discord.com/api/v10/users/{}", user_id))
@@ -17,18 +41,15 @@ async fn get_user_data(client: &Client<HttpsConnector<HttpConnector>>, token: &s
     let mut x = client.request(request).await?;
     let body = hyper::body::to_bytes(x.body_mut()).await?;
     let json_data = String::from_utf8(Vec::from(body))?;
-    let json: serde_json::Value = serde_json::from_str(&json_data)?;
+    let json: DiscordUserFormat = serde_json::from_str(&json_data)?;
     Ok(json)
 }
 
-async fn get_avatar_url(client: &Client<HttpsConnector<HttpConnector>>, token: &str, user_id: u64) -> anyhow::Result<String> {
-    let json = get_user_data(client, token, user_id).await?;
-    let id = json["id"].as_str().ok_or(anyhow::anyhow!("Missing avatar"))?;
-    let discrim = json["discriminator"].as_str().ok_or(anyhow::anyhow!("Missing discriminator"))?;
-    println!("Served request for {}: {}#{}", id, json["username"], discrim);
-    let avatar_url = match json["avatar"].as_str() {
-        None => default_avatar_url(discrim)?,
-        Some(avatar_hash) => format!("https://cdn.discordapp.com/avatars/{}/{}.png", id, avatar_hash)
+fn get_avatar_url(json: &DiscordUserFormat) -> anyhow::Result<String> {
+    println!("Served request for {}: {}#{}", json.id, json.username, json.discriminator);
+    let avatar_url = match &json.avatar {
+        None => default_avatar_url(&json.discriminator)?,
+        Some(avatar_hash) => format!("https://cdn.discordapp.com/avatars/{}/{}.png", json.id, avatar_hash)
     };
     Ok(avatar_url)
 }
@@ -67,6 +88,7 @@ fn default_avatar_url(discrim: &str) -> anyhow::Result<String> {
     Ok(format!("https://cdn.discordapp.com/embed/avatars/{}.png", bare))
 }
 
+#[derive(Serialize, Debug)]
 struct ResponseUserFormat {
     username: String,
     discriminator: String,
@@ -75,22 +97,37 @@ struct ResponseUserFormat {
 }
 
 async fn respond_with_json(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Response<Body>> {
-    let num_id = match userid.parse::<u64>() {
-        Err(_) => return make_err(404, "Not found"),
-        Ok(num) => num,
+    let json = unwrap_resp!(get_discord_data_for(&arc, userid).await?);
+    let avatar_url = get_avatar_url(&json)?;
+    let response = ResponseUserFormat {
+        username: json.username,
+        discriminator: json.discriminator,
+        avatar: avatar_url,
+        banner: json.banner.map(|hash| format!("https://cdn.discordapp.com/banners/{}/{}.png", json.id, hash)),
     };
     Ok(Response::builder()
         .status(200)
         .header("content-type", "application/json")
-        .body(serde_json::to_string("{\"todo\": true}")?.into())?)
+        .body(serde_json::to_string(&response)?.into())?)
+}
+
+async fn get_discord_data_for(arc: &Arc<Ctx>, userid: &str) -> anyhow::Result<anyhow::Result<DiscordUserFormat, Response<Body>>> {
+    let num_id = match userid.parse::<u64>() {
+        Err(_) => return make_err(404, "Not found").map(Err),
+        Ok(num) => num,
+    };
+    Ok(Ok(match get_user_data(&arc.client, &arc.token, num_id).await {
+        Err(e) => {
+            eprintln!("Got error from discord: {:?}", e);
+            return make_err(502, "Discord failed to respond").map(Err)
+        },
+        Ok(user_data) => user_data,
+    }))
 }
 
 async fn respond_with_image(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Response<Body>> {
-    let num_id = match userid.parse::<u64>() {
-        Err(_) => return make_err(404, "Not found"),
-        Ok(num) => num,
-    };
-    let avatar_url = match get_avatar_url(&arc.client, &arc.token, num_id).await {
+    let json = unwrap_resp!(get_discord_data_for(&arc, userid).await?);
+    let avatar_url = match get_avatar_url(&json) {
         Err(_) => return make_err(502, "Discord failed to respond"),
         Ok(avatar_url) => avatar_url,
     };
