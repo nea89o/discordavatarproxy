@@ -1,5 +1,4 @@
 use std::env;
-use std::fmt::format;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -8,7 +7,6 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server};
 use hyper_tls::HttpsConnector;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 macro_rules! unwrap_resp {
     ($x:expr) => {
@@ -30,6 +28,8 @@ struct DiscordUserFormat {
     bot: bool,
     banner: Option<String>,
     avatar: Option<String>,
+    #[serde(default)]
+    global_name: Option<String>,
 }
 
 async fn get_user_data(
@@ -46,21 +46,31 @@ async fn get_user_data(
     let mut x = client.request(request).await?;
     let body = hyper::body::to_bytes(x.body_mut()).await?;
     let json_data = String::from_utf8(Vec::from(body))?;
+    println!("{}", json_data);
     let json: DiscordUserFormat = serde_json::from_str(&json_data)?;
     Ok(json)
 }
 
-fn get_avatar_url(json: &DiscordUserFormat) -> anyhow::Result<String> {
+fn get_avatar_url(json: &DiscordUserFormat, allow_animated: bool) -> anyhow::Result<String> {
     println!(
         "Served request for {}: {}#{}",
         json.id, json.username, json.discriminator
     );
     let avatar_url = match &json.avatar {
         None => default_avatar_url(&json.id, &json.discriminator)?,
-        Some(avatar_hash) => format!(
-            "https://cdn.discordapp.com/avatars/{}/{}.png",
-            json.id, avatar_hash
-        ),
+        Some(avatar_hash) => {
+            if avatar_hash.starts_with("a_") && allow_animated {
+                format!(
+                    "https://cdn.discordapp.com/avatars/{}/{}.gif",
+                    json.id, avatar_hash
+                )
+            } else {
+                format!(
+                    "https://cdn.discordapp.com/avatars/{}/{}.png",
+                    json.id, avatar_hash
+                )
+            }
+        }
     };
     Ok(avatar_url)
 }
@@ -83,8 +93,11 @@ async fn resp(arc: Arc<Ctx>, req: Request<Body>) -> anyhow::Result<Response<Body
         None => return make_err(404, "Not found"),
         Some(request) => request,
     };
+    if let Some(userid) = request.strip_suffix(".gif") {
+        return respond_with_image(arc, userid, true).await;
+    }
     if let Some(userid) = request.strip_suffix(".png") {
-        return respond_with_image(arc, userid).await;
+        return respond_with_image(arc, userid, false).await;
     }
     if let Some(userid) = request.strip_suffix(".json") {
         return respond_with_json(arc, userid).await;
@@ -111,16 +124,21 @@ struct ResponseUserFormat {
     username: String,
     discriminator: String,
     avatar: String,
+    avatar_animated: String,
     banner: Option<String>,
+    display_name: Option<String>,
 }
 
 async fn respond_with_json(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Response<Body>> {
     let json = unwrap_resp!(get_discord_data_for(&arc, userid).await?);
-    let avatar_url = get_avatar_url(&json)?;
+    let avatar_url_animated = get_avatar_url(&json, true)?;
+    let avatar_url = get_avatar_url(&json, false)?;
     let response = ResponseUserFormat {
         username: json.username,
         discriminator: json.discriminator,
         avatar: avatar_url,
+        avatar_animated: avatar_url_animated,
+        display_name: json.global_name,
         banner: json.banner.map(|hash| {
             format!(
                 "https://cdn.discordapp.com/banners/{}/{}.png",
@@ -153,9 +171,13 @@ async fn get_discord_data_for(
     ))
 }
 
-async fn respond_with_image(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Response<Body>> {
+async fn respond_with_image(
+    arc: Arc<Ctx>,
+    userid: &str,
+    allow_animated: bool,
+) -> anyhow::Result<Response<Body>> {
     let json = unwrap_resp!(get_discord_data_for(&arc, userid).await?);
-    let avatar_url = match get_avatar_url(&json) {
+    let avatar_url = match get_avatar_url(&json, allow_animated) {
         Err(_) => return make_err(502, "Discord failed to respond"),
         Ok(avatar_url) => avatar_url,
     };
@@ -170,7 +192,14 @@ async fn respond_with_image(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Respo
     };
     Ok(Response::builder()
         .status(200)
-        .header("content-type", "image/png")
+        .header(
+            "content-type",
+            if avatar_url.ends_with(".gif") {
+                "image/gif"
+            } else {
+                "image/png"
+            },
+        )
         .body(resp.into_body())?)
 }
 
