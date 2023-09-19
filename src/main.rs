@@ -3,9 +3,9 @@ use std::fmt::format;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use hyper::{Body, Method, Request, Response, Server};
 use hyper::client::{Client, HttpConnector};
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Method, Request, Response, Server};
 use hyper_tls::HttpsConnector;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,7 +14,7 @@ macro_rules! unwrap_resp {
     ($x:expr) => {
         match $x {
             Ok(x) => x,
-            Err(x) => return Ok(x)
+            Err(x) => return Ok(x),
         }
     };
 }
@@ -26,12 +26,17 @@ struct DiscordUserFormat {
     discriminator: String,
     id: String,
     public_flags: i64,
-    #[serde(default)] bot: bool,
+    #[serde(default)]
+    bot: bool,
     banner: Option<String>,
     avatar: Option<String>,
 }
 
-async fn get_user_data(client: &Client<HttpsConnector<HttpConnector>>, token: &str, user_id: u64) -> anyhow::Result<DiscordUserFormat> {
+async fn get_user_data(
+    client: &Client<HttpsConnector<HttpConnector>>,
+    token: &str,
+    user_id: u64,
+) -> anyhow::Result<DiscordUserFormat> {
     let request = Request::builder()
         .method(Method::GET)
         .uri(format!("https://discord.com/api/v10/users/{}", user_id))
@@ -46,14 +51,19 @@ async fn get_user_data(client: &Client<HttpsConnector<HttpConnector>>, token: &s
 }
 
 fn get_avatar_url(json: &DiscordUserFormat) -> anyhow::Result<String> {
-    println!("Served request for {}: {}#{}", json.id, json.username, json.discriminator);
+    println!(
+        "Served request for {}: {}#{}",
+        json.id, json.username, json.discriminator
+    );
     let avatar_url = match &json.avatar {
-        None => default_avatar_url(&json.discriminator)?,
-        Some(avatar_hash) => format!("https://cdn.discordapp.com/avatars/{}/{}.png", json.id, avatar_hash)
+        None => default_avatar_url(&json.id, &json.discriminator)?,
+        Some(avatar_hash) => format!(
+            "https://cdn.discordapp.com/avatars/{}/{}.png",
+            json.id, avatar_hash
+        ),
     };
     Ok(avatar_url)
 }
-
 
 fn make_err(err: u16, text: &str) -> anyhow::Result<Response<Body>> {
     return Ok(Response::builder()
@@ -82,10 +92,18 @@ async fn resp(arc: Arc<Ctx>, req: Request<Body>) -> anyhow::Result<Response<Body
     return make_err(404, "Invalid format");
 }
 
-fn default_avatar_url(discrim: &str) -> anyhow::Result<String> {
+fn default_avatar_url(user_id: &str, discrim: &str) -> anyhow::Result<String> {
     let d = discrim.parse::<u16>()?;
-    let bare = d % 5;
-    Ok(format!("https://cdn.discordapp.com/embed/avatars/{}.png", bare))
+    let id = user_id.parse::<u64>()?;
+    let bare = if d == 0 {
+        ((id >> 22) % 6) as u16
+    } else {
+        d % 5
+    };
+    Ok(format!(
+        "https://cdn.discordapp.com/embed/avatars/{}.png",
+        bare
+    ))
 }
 
 #[derive(Serialize, Debug)]
@@ -103,7 +121,12 @@ async fn respond_with_json(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Respon
         username: json.username,
         discriminator: json.discriminator,
         avatar: avatar_url,
-        banner: json.banner.map(|hash| format!("https://cdn.discordapp.com/banners/{}/{}.png", json.id, hash)),
+        banner: json.banner.map(|hash| {
+            format!(
+                "https://cdn.discordapp.com/banners/{}/{}.png",
+                json.id, hash
+            )
+        }),
     };
     Ok(Response::builder()
         .status(200)
@@ -111,18 +134,23 @@ async fn respond_with_json(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Respon
         .body(serde_json::to_string(&response)?.into())?)
 }
 
-async fn get_discord_data_for(arc: &Arc<Ctx>, userid: &str) -> anyhow::Result<anyhow::Result<DiscordUserFormat, Response<Body>>> {
+async fn get_discord_data_for(
+    arc: &Arc<Ctx>,
+    userid: &str,
+) -> anyhow::Result<anyhow::Result<DiscordUserFormat, Response<Body>>> {
     let num_id = match userid.parse::<u64>() {
         Err(_) => return make_err(404, "Not found").map(Err),
         Ok(num) => num,
     };
-    Ok(Ok(match get_user_data(&arc.client, &arc.token, num_id).await {
-        Err(e) => {
-            eprintln!("Got error from discord: {:?}", e);
-            return make_err(502, "Discord failed to respond").map(Err)
+    Ok(Ok(
+        match get_user_data(&arc.client, &arc.token, num_id).await {
+            Err(e) => {
+                eprintln!("Got error from discord: {:?}", e);
+                return make_err(502, "Discord failed to respond").map(Err);
+            }
+            Ok(user_data) => user_data,
         },
-        Ok(user_data) => user_data,
-    }))
+    ))
 }
 
 async fn respond_with_image(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Response<Body>> {
@@ -132,7 +160,12 @@ async fn respond_with_image(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Respo
         Ok(avatar_url) => avatar_url,
     };
     let resp = match arc.client.get(avatar_url.parse()?).await {
-        Err(_) => return make_err(502, &format!("Discord failed to supply avatar for url: {}", avatar_url)),
+        Err(_) => {
+            return make_err(
+                502,
+                &format!("Discord failed to supply avatar for url: {}", avatar_url),
+            )
+        }
         Ok(avatar_data) => avatar_data,
     };
     Ok(Response::builder()
@@ -140,7 +173,6 @@ async fn respond_with_image(arc: Arc<Ctx>, userid: &str) -> anyhow::Result<Respo
         .header("content-type", "image/png")
         .body(resp.into_body())?)
 }
-
 
 struct Ctx {
     client: Client<HttpsConnector<HttpConnector>>,
@@ -155,7 +187,7 @@ async fn wrap_error(arc: Arc<Ctx>, req: Request<Body>) -> anyhow::Result<Respons
                 .status(500)
                 .body("500 Internal Error".into())?)
         }
-        Ok(o) => Ok(o)
+        Ok(o) => Ok(o),
     };
 }
 
@@ -166,15 +198,12 @@ async fn main() -> anyhow::Result<()> {
     let port = portstr.parse::<u16>()?;
     println!("Running with token: {}", token);
     let https = HttpsConnector::new();
-    let client = Client::builder()
-        .build::<_, Body>(https);
+    let client = Client::builder().build::<_, Body>(https);
     let arc = Arc::new(Ctx { client, token });
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let service = make_service_fn(|_conn| {
         let carc = Arc::clone(&arc);
-        async move {
-            Ok::<_, anyhow::Error>(service_fn(move |req| { wrap_error(Arc::clone(&carc), req) }))
-        }
+        async move { Ok::<_, anyhow::Error>(service_fn(move |req| wrap_error(Arc::clone(&carc), req))) }
     });
 
     let server = Server::bind(&addr).serve(service);
