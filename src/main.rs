@@ -234,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
 		.build();
 	let client = Client::builder().build::<_, Body>(https);
 	let arc = Arc::new(Ctx { client, token });
-	let addr = SocketAddr::from(([127, 0, 0, 1], port));
+	let addr = SocketAddr::from(([0, 0, 0, 0], port));
 	let service = make_service_fn(|_conn| {
 		let carc = Arc::clone(&arc);
 		async move { Ok::<_, anyhow::Error>(service_fn(move |req| wrap_error(Arc::clone(&carc), req))) }
