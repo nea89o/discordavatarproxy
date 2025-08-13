@@ -1,6 +1,5 @@
 FROM clux/muslrust:1.89.0-stable AS chef
 USER root
-RUN apk add openssl
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -18,7 +17,6 @@ RUN rm rust-toolchain.toml
 RUN cargo build --release --target x86_64-unknown-linux-musl --bin pfp
 
 FROM docker.io/alpine:3 AS runtime
-RUN apk add openssl
 WORKDIR /app
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/pfp /usr/local/bin/
 CMD ["/usr/local/bin/pfp"]

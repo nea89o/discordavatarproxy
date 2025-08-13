@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 
-[dependencies.hyper-tls]
-version = "*"
+[dependencies.hyper-rustls]
+version = "0.25.0"
 
 [dependencies.hyper]
 version = "*"
