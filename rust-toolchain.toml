@@ -1,0 +1,3 @@
+[toolchain]
+# Make sure this is always synced with Dockerfile
+channel = "1.89.0"
